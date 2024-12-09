@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Audio Visualization Recorder</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        html, body {
+            height: 100%;
+            width: 100%;
+            overflow: hidden; /* Remove scrollbars */
+            background-color: #000;
+            background-image: url('page-background.png');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+        }
+        canvas {
+            display: block;
+            border: 2px solid #fff;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .controls form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .controls label {
+            display: flex;
+            flex-direction: column;
+            font-size: 14px;
+            color: #fff;
+        }
+        .controls select {
+            padding: 5px 8px;
+            border: none;
+            border-radius: 4px;
+            margin-top: 4px;
+            background-color: #333;
+            color: #fff;
+            cursor: pointer;
+        }
+        .controls input[type="checkbox"] {
+            margin-top: 8px;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #888;
+            cursor: not-allowed;
+        }
+        #status {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            font-size: 14px;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 8px 12px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <form id="settingsForm">
+            <label>
+                Video Background:
+                <select id="backgroundUrl">
+                    <option value="background-1.jpg">Background 1</option>
+                    <option value="background-2.jpg">Background 2</option>
+                    <option value="background-3.jpg">Background 3</option>
+                    <option value="background-4.jpg">Background 4</option>
+                    <option value="background-5.jpg">Background 5</option>
+                </select>
+            </label>
+            <label>
+                Video Logo:
+                <select id="logoUrl">
+                    <option value="logo-1.jpg">Logo 1</option>
+                    <option value="logo-2.jpg">Logo 2</option>
+                    <option value="logo-3.jpg">Logo 3</option>
+                    <option value="logo-4.jpg">Logo 4</option>
+                    <option value="logo-5.jpg">Logo 5</option>
+                </select>
+            </label>
+            <label>
+                Video Song:
+                <select id="songUrl">
+                    <option value="song-1.mp3">Midnight Groove</option>
+                    <option value="song-2.mp3">Fading Echoes</option>
+                    <option value="song-3.mp3">Forever in My Heart</option>
+                    <option value="song-4.mp3">Rise Above</option>
+                    <option value="song-5.mp3">Silent Goodbye</option>
+                </select>
+            </label>
+            <label>
+                Enable Particles:
+                <input type="checkbox" id="enableParticles" checked />
+            </label>
+        </form>
+        <button id="recordButton">Start Recording</button>
+    </div>
+    <canvas class="audio-visualizer" width="1920" height="1080"></canvas>
+    <div id="status">Ready</div>
+
+    <script>
+        const recordButton = document.getElementById('recordButton');
+        const statusDiv = document.getElementById('status');
+        const canvas = document.querySelector('.audio-visualizer');
+        const canvasContext = canvas.getContext('2d');
+        const settingsForm = document.getElementById('settingsForm');
+        const logoUrlSelect = document.getElementById('logoUrl');
+        const backgroundUrlSelect = document.getElementById('backgroundUrl');
+        const songUrlSelect = document.getElementById('songUrl');
+        const enableParticlesInput = document.getElementById('enableParticles');
+
+        let audio = new Audio(songUrlSelect.value);
+        audio.crossOrigin = "anonymous";
+
+        let audioContext;
+        let analyser;
+        let source;
+        let started = false;
+
+        let mediaRecorder;
+        let recordedChunks = [];
+        let combinedStream;
+
+        let recording = false;
+
+        let stars = [];
+        const numStars = 500;
+        let particlesEnabled = true;
+
+        function initializeStars() {
+            stars = [];
+            for (let i = 0; i < numStars; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    radius: Math.random() * 1.5 + 0.5,
+                    speed: Math.random() * 0.2 + 0.1,
+                    opacity: Math.random() * 0.5 + 0.5
+                });
+            }
+        }
+
+        initializeStars();
+
+        const image = new Image();
+        image.src = logoUrlSelect.value;
+
+        let canvasBackgroundImage = new Image();
+        canvasBackgroundImage.src = backgroundUrlSelect.value;
+
+        canvasBackgroundImage.onload = () => {
+            canvasContext.drawImage(canvasBackgroundImage, 0, 0, canvas.width, canvas.height);
+        };
+
+        canvasBackgroundImage.onerror = () => {
+            console.error('Failed to load canvas background image.');
+            canvasContext.fillStyle = '#000';
+            canvasContext.fillRect(0, 0, canvas.width, canvas.height);
+        };
+
+        let baseRadius = 200;
+        let ringPulse = 0;
+
+        let animationFrameId;
+
+        function drawVisualizer() {
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            let time = Date.now();
+
+            canvasContext.fillStyle = 'rgba(0, 0, 0, 0.3)';
+            canvasContext.fillRect(0, 0, canvas.width, canvas.height);
+
+            if (canvasBackgroundImage.complete) {
+                canvasContext.drawImage(canvasBackgroundImage, 0, 0, canvas.width, canvas.height);
+            }
+
+            if (analyser) {
+                analyser.getByteFrequencyData(dataArray);
+            }
+
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / dataArray.length;
+            const volumeLevel = average / 255;
+            const adjustedVolumeLevel = volumeLevel * (audio.volume || 1);
+
+            if (particlesEnabled) {
+                for (let i = 0; i < stars.length; i++) {
+                    const star = stars[i];
+                    star.y += star.speed * (1 + adjustedVolumeLevel * 2);
+                    if (star.y > canvas.height) {
+                        star.y = 0;
+                        star.x = Math.random() * canvas.width;
+                    }
+                    canvasContext.fillStyle = `rgba(255, 255, 255, ${star.opacity})`;
+                    canvasContext.beginPath();
+                    canvasContext.arc(star.x, star.y, star.radius, 0, 2 * Math.PI);
+                    canvasContext.fill();
+                }
+            }
+
+            ringPulse = 20 * adjustedVolumeLevel;
+            const breathSpeed = (adjustedVolumeLevel * 0.1 + 0.005);
+            const ringRadius = baseRadius + ringPulse * Math.sin(time * breathSpeed);
+
+            if (image.complete) {
+                canvasContext.save();
+                canvasContext.beginPath();
+                canvasContext.arc(centerX, centerY, ringRadius, 0, 2 * Math.PI);
+                canvasContext.closePath();
+                canvasContext.clip();
+
+                const imgWidth = ringRadius * 2;
+                const imgHeight = ringRadius * 2;
+                canvasContext.drawImage(
+                    image,
+                    centerX - ringRadius,
+                    centerY - ringRadius,
+                    imgWidth,
+                    imgHeight
+                );
+
+                canvasContext.restore();
+            }
+
+            const sampleRate = audioContext ? audioContext.sampleRate : 44100;
+            const frequencyBinCount = bufferLength;
+            const nyquist = sampleRate / 2;
+            const freqPerBin = nyquist / frequencyBinCount;
+
+            const minFrequency = 20; // Hz
+            const maxFrequency = 16000; // Hz
+
+            const startBin = Math.floor(minFrequency / freqPerBin);
+            const endBin = Math.floor(maxFrequency / freqPerBin);
+
+            const totalBins = endBin - startBin + 1;
+            const barWidth = (2 * Math.PI) / totalBins;
+            let barHeight;
+
+            const rotationOffset = -Math.PI / 4;
+
+            for (let i = startBin; i <= endBin; i++) {
+                const dataValue = dataArray[i] || 0;
+                barHeight = (dataValue / 255) * 100;
+
+                const angle = barWidth * (i - startBin) + rotationOffset;
+
+                const x1 = centerX + Math.cos(angle) * ringRadius;
+                const y1 = centerY + Math.sin(angle) * ringRadius;
+                const x2 = centerX + Math.cos(angle) * (ringRadius + barHeight);
+                const y2 = centerY + Math.sin(angle) * (ringRadius + barHeight);
+
+                const gradient = canvasContext.createLinearGradient(x1, y1, x2, y2);
+                gradient.addColorStop(0, '#fff');
+                gradient.addColorStop(1, `hsl(${(i / totalBins) * 360}, 100%, 50%)`);
+
+                canvasContext.lineWidth = 6;
+                canvasContext.strokeStyle = gradient;
+                canvasContext.beginPath();
+                canvasContext.moveTo(x1, y1);
+                canvasContext.lineTo(x2, y2);
+                canvasContext.stroke();
+            }
+
+            const hue = (time * 0.005) % 360;
+            canvasContext.beginPath();
+            canvasContext.arc(centerX, centerY, ringRadius, 0, 2 * Math.PI);
+            canvasContext.strokeStyle = `hsl(${hue}, 100%, 50%)`;
+            canvasContext.lineWidth = 5 + (adjustedVolumeLevel * 10);
+            canvasContext.shadowBlur = 20 * adjustedVolumeLevel;
+            canvasContext.shadowColor = `hsl(${hue}, 100%, 50%)`;
+            canvasContext.stroke();
+            canvasContext.shadowBlur = 0;
+
+            animationFrameId = requestAnimationFrame(drawVisualizer);
+        }
+
+        const bufferLength = 2048;
+        const dataArray = new Uint8Array(bufferLength);
+
+        let animationActive = false;
+
+        function startAnimation() {
+            if (!animationActive) {
+                animationActive = true;
+                drawVisualizer();
+            }
+        }
+
+        function stopAnimation() {
+            if (animationActive) {
+                cancelAnimationFrame(animationFrameId);
+                animationActive = false;
+            }
+        }
+
+        function updateLogo(url) {
+            const newImage = new Image();
+            newImage.src = url;
+            newImage.onload = () => {
+                image.src = url;
+            };
+            newImage.onerror = () => {
+                console.error('Failed to load logo image.');
+                alert('Failed to load logo image. Please check the URL.');
+            };
+        }
+
+        function updateCanvasBackground(url) {
+            const newBackground = new Image();
+            newBackground.src = url;
+            newBackground.onload = () => {
+                canvasBackgroundImage.src = url;
+            };
+            newBackground.onerror = () => {
+                console.error('Failed to load canvas background image.');
+                alert('Failed to load canvas background image. Please check the URL.');
+            };
+        }
+
+        function updateAudioSource(url) {
+            let wasPlaying = false;
+
+            if (!audio.paused) {
+                audio.pause();
+                wasPlaying = true;
+            }
+
+            audio.src = url;
+            audio.load();
+
+            audio.oncanplay = () => {
+                if (wasPlaying) {
+                    audio.play();
+                }
+            };
+
+            audio.onerror = () => {
+                console.error('Failed to load audio source.');
+                alert('Failed to load audio source. Please check the URL.');
+            };
+        }
+
+        settingsForm.addEventListener('change', (e) => {
+            if (e.target.id === 'logoUrl') {
+                updateLogo(e.target.value);
+            }
+            if (e.target.id === 'backgroundUrl') {
+                updateCanvasBackground(e.target.value);
+            }
+            if (e.target.id === 'songUrl') {
+                updateAudioSource(e.target.value);
+            }
+            if (e.target.id === 'enableParticles') {
+                particlesEnabled = e.target.checked;
+            }
+        });
+
+        audio.addEventListener('ended', () => {
+            if (recording) {
+                stopRecording();
+            }
+        });
+
+        async function startRecording() {
+            if (!started) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                source = audioContext.createMediaElementSource(audio);
+
+                analyser.fftSize = 4096;
+                source.connect(analyser);
+                analyser.connect(audioContext.destination);
+
+                audio.currentTime = 0;
+                audio.play();
+                started = true;
+
+                statusDiv.innerText = 'Playing';
+            } else {
+                if (audio.paused) {
+                    audio.currentTime = 0;
+                    audio.play();
+                    statusDiv.innerText = 'Playing';
+                }
+            }
+
+            const canvasStream = canvas.captureStream(60); // 60 FPS
+
+            const audioDestination = audioContext.createMediaStreamDestination();
+            source.connect(audioDestination);
+            const audioStream = audioDestination.stream;
+
+            combinedStream = new MediaStream([
+                ...canvasStream.getVideoTracks(),
+                ...audioStream.getAudioTracks()
+            ]);
+
+            try {
+                const options = {
+                    mimeType: 'video/webm; codecs=vp8,opus',
+                    videoBitsPerSecond: 10000000 // 10 Mbps for higher quality
+                };
+                mediaRecorder = new MediaRecorder(combinedStream, options);
+            } catch (e) {
+                console.error('MediaRecorder initialization failed:', e);
+                alert('MediaRecorder not supported in your browser or the specified MIME type is not supported.');
+                return;
+            }
+
+            mediaRecorder.ondataavailable = function(event) {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = function() {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = 'audio-visualizer-recording.webm';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                recordedChunks = [];
+                statusDiv.innerText = 'Recording stopped. Video downloaded.';
+                recordButton.innerText = 'Start Recording';
+                recording = false;
+
+                audio.currentTime = 0;
+                audio.pause();
+                statusDiv.innerText = 'Ready';
+
+                stopAnimation();
+                started = false;
+                startAnimation();
+            };
+
+            mediaRecorder.start();
+            recordedChunks = [];
+            recording = true;
+            recordButton.innerText = 'Stop Recording';
+            statusDiv.innerText = 'Recording...';
+
+            startAnimation();
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                statusDiv.innerText = 'Stopping recording...';
+                recordButton.innerText = 'Start Recording';
+            }
+
+            stopAnimation();
+            audio.pause();
+            statusDiv.innerText = 'Ready';
+            started = false;
+            startAnimation();
+        }
+
+        recordButton.addEventListener('click', () => {
+            if (!recording) {
+                startRecording();
+                return;
+            }
+
+            stopRecording();
+        });
+
+        startAnimation();
+    </script>
+</body>
+</html>
